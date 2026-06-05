@@ -1,3 +1,4 @@
+import { supabase } from "@/lib/supabase";
 import { useRef, useState } from "react";
 import emailjs from "@emailjs/browser";
 import { toast } from "sonner";
@@ -54,41 +55,77 @@ export function OrderForm() {
     }
     setSubmitting(true);
     try {
-      const fileInfo = file
-        ? `${file.name} (${(file.size / 1024).toFixed(1)} KB, ${file.type || "unknown"})`
-        : "No file attached";
-      const params = {
-        customer_name: parsed.data.name,
-        customer_email: parsed.data.email,
-        customer_phone: parsed.data.phone,
+  let fileUrl = "";
+
+  if (file) {
+    const fileName = `${Date.now()}-${file.name}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("order-files")
+      .upload(fileName, file);
+
+    if (uploadError) {
+      throw uploadError;
+    }
+
+    const { data: publicData } = supabase.storage
+      .from("order-files")
+      .getPublicUrl(fileName);
+
+    fileUrl = publicData.publicUrl;
+  }
+
+  const { error: dbError } = await supabase
+    .from("orders")
+    .insert([
+      {
+        full_name: parsed.data.name,
+        email: parsed.data.email,
+        phone: parsed.data.phone,
         service_type: parsed.data.service,
         quantity: parsed.data.quantity,
-        notes: parsed.data.notes || "—",
-        file_info: fileInfo,
-        to_email: EMAILJS_CONFIG.adminEmail,
-      };
+        notes: parsed.data.notes || "",
+        file_url: fileUrl,
+        status: "pending",
+      },
+    ]);
 
-      if (EMAILJS_CONFIG.serviceId.startsWith("YOUR_")) {
-        await new Promise((r) => setTimeout(r, 900));
-        toast.success("Order submitted! (Demo mode — configure EmailJS keys to deliver emails.)");
-      } else {
-        await emailjs.send(
-          EMAILJS_CONFIG.serviceId,
-          EMAILJS_CONFIG.templateId,
-          params,
-          { publicKey: EMAILJS_CONFIG.publicKey },
-        );
-        toast.success("Order sent! We'll contact you shortly.");
-      }
-      formRef.current?.reset();
-      setFile(null);
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to submit. Please try again or contact us directly.");
-    } finally {
-      setSubmitting(false);
-    }
+  if (dbError) {
+    throw dbError;
+  }
+
+  const fileInfo = file
+    ? `${file.name} (${(file.size / 1024).toFixed(1)} KB)`
+    : "No file attached";
+
+  const params = {
+    customer_name: parsed.data.name,
+    customer_email: parsed.data.email,
+    customer_phone: parsed.data.phone,
+    service_type: parsed.data.service,
+    quantity: parsed.data.quantity,
+    notes: parsed.data.notes || "—",
+    file_info: fileInfo,
+    to_email: EMAILJS_CONFIG.adminEmail,
   };
+
+  await emailjs.send(
+    EMAILJS_CONFIG.serviceId,
+    EMAILJS_CONFIG.templateId,
+    params,
+    { publicKey: EMAILJS_CONFIG.publicKey }
+  );
+
+  toast.success("Order berhasil dikirim!");
+
+  formRef.current?.reset();
+  setFile(null);
+
+} catch (err) {
+  console.error(err);
+  alert(JSON.stringify(err));
+  toast.error("Gagal mengirim order.");
+}}
 
   return (
     <section id="order" className="py-24 bg-secondary/40">
